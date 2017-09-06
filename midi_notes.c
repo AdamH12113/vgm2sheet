@@ -4,6 +4,7 @@
 #include <errno.h>
 #include <stdint.h>
 #include <inttypes.h>
+#include <stdbool.h>
 #include "midi_types.h"
 #include "midi_strings.h"
 
@@ -244,27 +245,76 @@ void Process_Track(uint8_t *data)
 	}
 }
 
-struct NoteConverter {float duration; const char *name;};
+struct NoteLength {float duration; const char *string;};
 
-struct NoteConverter noteLengths[] =
+static const struct NoteLength noteLengths[] =
 {
-	{0.015625, "64"},
-	{0.03125,  "32"},
-	{0.0625,   "16"},
+	{0.015625,  "64"},
+	{0.0234375, "64."},
+	{0.03125,   "32"},
+	{0.046875,  "32."},
+	{0.0625,    "16"},
+	{0.09735,   "16."},
 	{0.125,     "8"},
+	{0.1875,    "8."},
 	{0.25,      "4"},
+	{0.375,     "4."},
 	{0.5,       "2"},
+	{0.75,      "2."},
 	{1.0,       "1"},
-	{2.0,  "\breve"}
+	{1.5,       "1."},
+	{2.0,       "\\breve"}
 };
 
-const size_t numNotes = sizeof(noteLengths)/sizeof(struct NoteConverter);
-		
+static const size_t numNotes = sizeof(noteLengths)/sizeof(struct NoteLength);
+
+static const float durationTolerance = 0.1;
+
+//Return the longest single note (dotted or bare) that can fit into the duration
+const struct NoteLength *Convert_Duration(float duration)
+{
+	int d;
+	
+	//Check for an exact match
+	for (d = 0; d < numNotes; d++)
+	{
+		if (duration > (1-durationTolerance)*noteLengths[d].duration &&
+		    duration < (1+durationTolerance)*noteLengths[d].duration)
+		{
+			return &noteLengths[d];
+		}
+	}
+	
+	//If there's no exact match, return the longest possible note
+	for (d = 0; d < numNotes; d++)
+	{
+		//We already checked with tolerances above, so we don't have to worry about them here
+		if (noteLengths[d].duration > duration)
+		{
+			if (d > 0)
+			{
+				return &noteLengths[d-1];
+			} else
+			{
+				fprintf(stderr, "Error: Note duration too short: %f\n", duration);
+				exit(EXIT_FAILURE);
+			}
+		}
+	}
+	
+	//If we run out of notes, return a breve
+	return &noteLengths[numNotes-1];
+}
+
+
+
+
 //Process a MIDI channel voice or mode message. These all have fixed lengths,
 //with one or two data bytes after the status byte.
 void Process_MIDI_Event(uint8_t status, uint8_t *data)
 {
 	static uint32_t noteStarts[16] = {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0};
+	const struct NoteLength *length;
 	const char *note;
 	uint32_t dTime;
 	uint8_t msgType, msgIndex, channel, octave;
@@ -275,7 +325,6 @@ void Process_MIDI_Event(uint8_t status, uint8_t *data)
 	msgIndex = (msgType >> 4) - 0x8;
 	channel = status & 0x0F;
 	dTime = g_time - noteStarts[channel];
-	
 	duration = (float)dTime / (float)(4 * ppqn);
 	
 	//Parse the first data byte as a key (note) just in case
@@ -297,48 +346,15 @@ void Process_MIDI_Event(uint8_t status, uint8_t *data)
 			printf("Note: %-4" PRIu32 "  %s%" PRIu8 "\t%1.4f   ", dTime, note, octave, duration);
 			noteStarts[channel] = g_time;
 			
-			if (duration > 0.9*2.0 && duration < 1.1*2.0)
+			//Convert the duration to one or more note times
+			while (duration > 0.005)
 			{
-				printf("2/1");
-			} else if (duration > 0.9*1.0 && duration < 1.1*1.0)
-			{
-				printf("1/1");
-			} else if (duration > 0.9*0.5 && duration < 1.1*0.5)
-			{
-				printf("1/2");
-			} else if (duration > 0.9*0.25 && duration < 1.1*0.25)
-			{
-				printf("1/4");
-			} else if (duration > 0.9*0.125 && duration < 1.1*0.125)
-			{
-				printf("1/8");
-			} else if (duration > 0.9*0.0625 && duration < 1.1*0.0625)
-			{
-				printf("1/16");
-			} else if (duration > 0.9*0.375 && duration < 1.1*0.375)
-			{
-				printf("1/4 .");
-			} else if (duration > 0.9*0.625 && duration < 1.1*0.625)
-			{
-				printf("1/2 + 1/8");
-			} else if (duration > 0.9*0.75 && duration < 1.1*0.75)
-			{
-				printf("1/2 .");
-			} else if (duration > 0.9*1.75 && duration < 1.1*1.75)
-			{
-				printf("1/1 + 1/2 .");
-			} else if (duration > 0.9*0.1875 && duration < 1.1*0.1875)
-			{
-				printf("1/8 .");
-			} else if (duration > 0.9*1.125 && duration < 1.1*1.125)
-			{
-				printf("1/1 + 1/8");
-			} else if (duration > 0.9*0.875 && duration < 1.1*0.875)
-			{
-				printf("1/2 + 1/4 .");
-			} else
-			{
-				printf("UNKNOWN");
+				printf("%s%" PRIu8 " ", note, octave);
+				length = Convert_Duration(duration);
+				duration -= length->duration;
+				printf("%s", length->string);
+				if (duration >= 0.005)
+					printf("~ ");
 			}
 			printf("\n");
 			break;
