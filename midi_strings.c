@@ -151,7 +151,7 @@ const char *midi_voice_messages[] =
 
 //Note names, mainly for the note on and off events. The array index is the
 //key number (first data byte) mod 12.
-const char *noteNames[] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
+const char *noteNames[] = {"c", "cs", "d", "ds", "e", "f", "fs", "g", "gs", "a", "as", "b"};
 
 //Instrument names for program change events. The array index is the program
 //number (first data byte).

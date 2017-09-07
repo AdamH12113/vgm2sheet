@@ -18,8 +18,9 @@ void Process_MIDI_Event(uint8_t status, uint8_t *data);
 
 
 //MIDI state variables. So far, this is just the timing parameters.
-static uint32_t ppqn = 30, tempo = 500000;
-uint32_t g_time = 0;
+static uint32_t g_ppqn = 30, tempo = 500000;
+static uint32_t g_time = 0;
+uint8_t g_userChannel = 0;
 
 
 int main(int argc, char *argv[])
@@ -30,14 +31,15 @@ int main(int argc, char *argv[])
 	int nextByte, c;
 	
 	//Check for valid command line arguments
-	if (argc != 3)
+	if (argc != 4)
 	{
-		fprintf(stderr, "Usage:\n\tmidi_notes <input filename> <PPQN>\n\n");
+		fprintf(stderr, "Usage:\n\tmidi_notes <input filename> <PPQN> <channel>\n\n");
 		return EXIT_FAILURE;
 	}
 	
-	//Save the PPQN value
-	ppqn = strtol(argv[2], NULL, 10);
+	//Save the PPQN and channel values
+	g_ppqn = strtol(argv[2], NULL, 10);
+	g_userChannel = strtol(argv[3], NULL, 10);
 
 	//Open the input file
 	inFile = fopen(argv[1], "rb");
@@ -262,8 +264,6 @@ static const struct NoteLength noteLengths[] =
 	{0.5,       "2"},
 	{0.75,      "2."},
 	{1.0,       "1"},
-	{1.5,       "1."},
-	{2.0,       "\\breve"}
 };
 
 static const size_t numNotes = sizeof(noteLengths)/sizeof(struct NoteLength);
@@ -317,7 +317,9 @@ void Process_MIDI_Event(uint8_t status, uint8_t *data)
 	const struct NoteLength *length;
 	const char *note;
 	uint32_t dTime;
-	uint8_t msgType, msgIndex, channel, octave;
+	uint8_t msgType, msgIndex, channel;
+	int8_t octave;
+	int o;
 	float duration;
 
 	//Parse the status byte
@@ -325,11 +327,17 @@ void Process_MIDI_Event(uint8_t status, uint8_t *data)
 	msgIndex = (msgType >> 4) - 0x8;
 	channel = status & 0x0F;
 	dTime = g_time - noteStarts[channel];
-	duration = (float)dTime / (float)(4 * ppqn);
+	duration = (float)dTime / (float)(4 * g_ppqn);
 	
-	//Parse the first data byte as a key (note) just in case
+	//Only process messages from the desired channel
+	if (channel != g_userChannel)
+		return;
+	
+	//Parse the first data byte as a key (note) just in case. MIDI starts its
+	//note numbers in octave -1 even though C0 is below the typical lower limit
+	//of human hearing.
 	note = noteNames[data[0] % 12];
-	octave = data[0] / 12;
+	octave = (data[0] / 12) - 1;
 
 	switch (msgType)
 	{
@@ -342,21 +350,34 @@ void Process_MIDI_Event(uint8_t status, uint8_t *data)
 			noteStarts[channel] = g_time;
 			break;
 		case MIDI_EVENT_NOTE_OFF:
-			printf("ch %2" PRIu8 "  ", channel);
-			printf("Note: %-4" PRIu32 "  %s%" PRIu8 "\t%1.4f   ", dTime, note, octave, duration);
+//			printf("ch %2" PRIu8 "  ", channel);
+//			printf("Note: %-4" PRIu32 "  %s%" PRIu8 "\t%1.4f   ", dTime, note, octave, duration);
 			noteStarts[channel] = g_time;
 			
 			//Convert the duration to one or more note times
 			while (duration > 0.005)
 			{
-				printf("%s%" PRIu8 " ", note, octave);
+				printf("%s%", note);
+				if (octave < 3)
+				{
+					for (o = 2; o >= octave; o--)
+					{
+						printf(",");
+					}
+				} else if (octave > 3)
+				{
+					for (o = 4; o <= octave; o++)
+					{
+						printf("'");
+					}
+				}
 				length = Convert_Duration(duration);
 				duration -= length->duration;
 				printf("%s", length->string);
 				if (duration >= 0.005)
 					printf("~ ");
 			}
-			printf("\n");
+			printf(" ");
 			break;
 		default:
 			//Ignore all other events
